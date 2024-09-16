@@ -1,41 +1,33 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice } from 'obsidian';
-import { GitAPI } from 'src/api';
-import { GitSettings, DEFAULT_SETTINGS } from 'src/settings';
-import { startAutoSync, syncChanges } from 'src/sync';
+import { App, Plugin, PluginSettingTab, Setting, TFile, Notice } from 'obsidian';
+import { GitAPI } from './src/api';
+import { startAutoSync, syncChanges } from './src/sync';
+import { GitSettings } from './src/settings';
 
 export default class ObsidianGitPlugin extends Plugin {
   settings: GitSettings;
 
   async onload() {
     await this.loadSettings();
-    
-    this.addSettingTab(new GitSettingTab(this.app, this));
 
-    const ribbonIconEl = this.addRibbonIcon('github', 'Push Changes', async (evt: MouseEvent) => {
-      if (!this.settings.authenticated) {
-        new Notice('Please authenticate with your Personal Access Token.');
-      } else if (!this.settings.selectedRepo) {
-        new Notice('Please select a repository.');
-      } else if (!this.settings.selectedBranch) {
-        new Notice('Please select a branch.');
+    this.addRibbonIcon('github', 'Sync to Git', async () => {
+      const isAuthenticated = await GitAPI.authenticate(this.settings);
+      if (!isAuthenticated) {
+        new Notice('Authentication failed. Check your token and try again.');
       } else {
         await syncChanges(this);
-        new Notice('Changes pushed successfully.');
+        new Notice('Changes synced successfully.');
       }
     });
 
-    // Start auto sync if enabled
+    this.addSettingTab(new GitSettingTab(this.app, this));
+
     if (this.settings.autoSync) {
       startAutoSync(this);
     }
   }
 
-  onunload() {
-    // Cleanup if necessary
-  }
-
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign({}, new GitSettings(), await this.loadData());
   }
 
   async saveSettings() {
@@ -53,110 +45,107 @@ class GitSettingTab extends PluginSettingTab {
 
   display(): void {
     const { containerEl } = this;
+
     containerEl.empty();
 
     containerEl.createEl('h2', { text: 'Obsidian Git Settings' });
 
-    // Git Provider Selector
+    // Git provider selector
     new Setting(containerEl)
       .setName('Git Provider')
-      .setDesc('Select the Git provider.')
+      .setDesc('Select Git provider (GitHub or GitLab).')
       .addDropdown(dropdown => dropdown
         .addOption('github', 'GitHub')
         .addOption('gitlab', 'GitLab')
         .setValue(this.plugin.settings.gitProvider)
-        .onChange(async (value) => {
+        .onChange(async (value: string) => {
           this.plugin.settings.gitProvider = value;
           await this.plugin.saveSettings();
-        }));
+        })
+      );
 
-    // Personal Access Token
+    // Personal access token
     new Setting(containerEl)
       .setName('Personal Access Token')
-      .setDesc('Enter your personal access token.')
+      .setDesc('Enter your personal access token for GitHub or GitLab.')
       .addText(text => text
-        .setPlaceholder('Enter your token')
+        .setPlaceholder('********')
         .setValue(this.plugin.settings.token)
-        .onChange(async (value) => {
+        .onChange(async (value: string) => {
           this.plugin.settings.token = value;
           await this.plugin.saveSettings();
         })
-        .inputEl.type = 'password')  // Mask token
+      )
+      .addButton(button => button
+        .setButtonText('Authenticate')
+        .setIcon('key')
+        .onClick(async () => {
+          const isAuthenticated = await GitAPI.authenticate(this.plugin.settings);
+          if (isAuthenticated) {
+            new Notice('Authentication successful.');
+            button.setIcon('checkmark').setCta(true);
+          } else {
+            new Notice('Authentication failed.');
+            button.setIcon('cross').setCta(false);
+          }
+        })
+      );
 
-      .addButton(button => {
-        button.setButtonText('Authenticate').setIcon('key')
-          .onClick(async () => {
-            const success = await GitAPI.authenticate(this.plugin.settings);
-            if (success) {
-              button.setIcon('check-circle').setTooltip('Authenticated');
-              this.plugin.settings.authenticated = true;
-            } else {
-              button.setIcon('cross').setTooltip('Failed Authentication');
-            }
-            await this.plugin.saveSettings();
-          });
-      });
-
-    // Repository Selection
-    const repoSetting = new Setting(containerEl)
+    // Repository selector
+    const repoDropdown = new Setting(containerEl)
       .setName('Repository')
       .setDesc('Select the repository to push to.')
-      .addDropdown(dropdown => dropdown.setDisabled(!this.plugin.settings.authenticated));
+      .addDropdown(dropdown => {
+        if (!this.plugin.settings.token) return;
 
-    if (this.plugin.settings.authenticated) {
-      GitAPI.fetchRepos(this.plugin.settings).then(repos => {
-        repos.forEach(repo => dropdown.addOption(repo.name, repo.name));
-        dropdown.setValue(this.plugin.settings.selectedRepo);
+        GitAPI.fetchRepos(this.plugin.settings).then(repos => {
+          repos.forEach(repo => dropdown.addOption(repo.name, repo.name));
+          dropdown.setValue(this.plugin.settings.selectedRepo);
+        });
+
+        dropdown.onChange(async (value: string) => {
+          this.plugin.settings.selectedRepo = value;
+          await this.plugin.saveSettings();
+        });
       });
-    }
 
-    // Branch Selection
+    // Branch selector
     new Setting(containerEl)
       .setName('Branch')
       .setDesc('Select the branch to push to.')
-      .addDropdown(dropdown => dropdown.setDisabled(!this.plugin.settings.selectedRepo))
-      .setValue(this.plugin.settings.selectedBranch)
-      .onChange(async (value) => {
-        this.plugin.settings.selectedBranch = value;
-        await this.plugin.saveSettings();
-      });
+      .addDropdown(dropdown => dropdown
+        .addOption('main', 'Main')
+        .addOption('develop', 'Develop')
+        .setValue(this.plugin.settings.selectedBranch)
+        .onChange(async (value: string) => {
+          this.plugin.settings.selectedBranch = value;
+          await this.plugin.saveSettings();
+        })
+      );
 
-    // Git Sync Interval
-    new Setting(containerEl)
-      .setName('Git Sync Interval')
-      .setDesc('Time interval for Git auto-sync (in minutes).')
-      .addText(text => text
-        .setPlaceholder('Enter minutes')
-        .setValue(this.plugin.settings.syncInterval.toString())
-        .onChange(async (value) => {
-          const interval = Number(value);
-          if (!isNaN(interval)) {
-            this.plugin.settings.syncInterval = interval;
-            await this.plugin.saveSettings();
-          }
-        }));
-
-    // Auto Sync
+    // Auto sync toggle
     new Setting(containerEl)
       .setName('Auto Sync')
-      .setDesc('Automatically sync changes at intervals.')
+      .setDesc('Enable automatic syncing.')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.autoSync)
-        .onChange(async (value) => {
+        .onChange(async (value: boolean) => {
           this.plugin.settings.autoSync = value;
           await this.plugin.saveSettings();
-        }));
+        })
+      );
 
-    // Refresh Repos
+    // Sync interval setting
     new Setting(containerEl)
-      .setName('Refresh Repos')
-      .setDesc('Click to refresh the repository and branch list.')
-      .addButton(button => {
-        button.setButtonText('Refresh').setIcon('refresh-ccw')
-          .onClick(async () => {
-            const repos = await GitAPI.fetchRepos(this.plugin.settings);
-            // Update the UI with the new repos
-          });
-      });
+      .setName('Sync Interval (minutes)')
+      .setDesc('Time interval for automatic git sync.')
+      .addText(text => text
+        .setPlaceholder('5')
+        .setValue(this.plugin.settings.syncInterval.toString())
+        .onChange(async (value: string) => {
+          this.plugin.settings.syncInterval = parseInt(value);
+          await this.plugin.saveSettings();
+        })
+      );
   }
 }
