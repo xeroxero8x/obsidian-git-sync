@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-git",
+	"name": "Obsidian Git",
+	"version": "1.0.0",
+	"minAppVersion": "0.12.0",
+	"description": "A plugin for syncing Obsidian vaults with GitHub or GitLab repositories.",
+	"author": "008",
+	"authorUrl": "",
+	"isDesktopOnly": false
+}
