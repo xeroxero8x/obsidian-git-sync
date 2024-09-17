@@ -1,19 +1,9 @@
-export interface GitSettings {
-  gitProvider: string;
-  token: string;
-  authenticated: boolean;
-  selectedRepo: string;
-  selectedBranch: string;
-  syncInterval: number;
-  autoSync: boolean;
+export class GitSettings {
+  token: string = '';
+  username: string = '';
+  selectedRepo: string = '';
+  selectedBranch: string = '';
+  autoSync: boolean = false;
+  syncInterval: number = 5;
+  deviceName: string = 'Unknown Device';
 }
-
-export const DEFAULT_SETTINGS: GitSettings = {
-  gitProvider: 'github',
-  token: '',
-  authenticated: false,
-  selectedRepo: '',
-  selectedBranch: '',
-  syncInterval: 15,
-  autoSync: false
-};

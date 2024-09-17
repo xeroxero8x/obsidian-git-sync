@@ -1,26 +1,39 @@
+import { TFile, Notice } from 'obsidian';
 import ObsidianGitPlugin from '../main';
+import { GitAPI } from './api';
+
+let autoSyncInterval: number;
 
 export function startAutoSync(plugin: ObsidianGitPlugin) {
-  setInterval(async () => {
+  if (autoSyncInterval) clearInterval(autoSyncInterval);
+
+  autoSyncInterval = window.setInterval(async () => {
     await syncChanges(plugin);
   }, plugin.settings.syncInterval * 60000);
 }
 
 export async function syncChanges(plugin: ObsidianGitPlugin) {
-  // Logic to detect file changes and commit them
-  // File creation, deletion, move with specific commit messages
-  const changes = detectFileChanges();
-  for (const change of changes) {
-    const commitMessage = `${plugin.settings.deviceName}: ${change}`;
-    await commitToGit(plugin, commitMessage);
+  const files = plugin.app.vault.getFiles();
+  for (const file of files) {
+    await handleFileChange(plugin, file);
   }
 }
 
-function detectFileChanges(): string[] {
-  // Dummy implementation, replace with real file change detection
-  return ['created example.txt'];
-}
+async function handleFileChange(plugin: ObsidianGitPlugin, file: TFile) {
+  const content = await plugin.app.vault.read(file);
 
-async function commitToGit(plugin: ObsidianGitPlugin, message: string) {
-  // Perform the actual git commit operation
+  // Check if the file has changes
+  const changed = await GitAPI.checkForChanges(plugin.settings, content, file.path);
+  if (!changed) {
+    return; // Skip if no changes
+  }
+
+  const message = `${plugin.settings.deviceName}: Updated ${file.name}`;
+
+  try {
+    await GitAPI.commitChanges(plugin.settings, message, content, file.path);
+    new Notice(`Committed: ${file.name}`);
+  } catch (error) {
+    new Notice(`Failed to commit ${file.name}: ${error.message}`);
+  }
 }
